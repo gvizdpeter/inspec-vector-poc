@@ -1,0 +1,60 @@
+---
+sources:
+  inspec_exec_source:
+    type: exec
+    mode: scheduled
+    scheduled:
+      exec_interval_secs: 30
+    command:
+      - "/run_inspec.sh"
+
+transforms:
+  parse_json_transform:
+    type: remap
+    inputs:
+      - inspec_exec_source
+    source: |-
+      . = parse_json!(.message)
+
+  lua_transform:
+    type: lua
+    inputs:
+      - parse_json_transform
+    version: "2"
+    hooks:
+      process: |-
+        function (event, emit)
+          result = -1
+          for k,v in pairs(event["log"]["results"]) do
+            if v["status"] == "passed" then
+              result = 1
+            end
+            if v["status"] == "failed" then
+              result = 0
+              break
+            end
+          end
+          event["log"]["result"] = result
+          emit(event)
+        end
+
+  log_to_metric_transform:
+    type: log_to_metric
+    inputs:
+      - lua_transform
+    metrics:
+      - type: gauge
+        field: result
+        tags:
+          control_id: "{{id}}"
+          title: "{{title}}"
+          description: "{{desc}}"
+          hostname: "${HOSTNAME}"
+
+sinks:
+  prometheus_exporter_sink:
+    type: prometheus_exporter
+    inputs:
+      - log_to_metric_transform
+    address: 0.0.0.0:9598
+    default_namespace: inspec
