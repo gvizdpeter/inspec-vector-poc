@@ -40,20 +40,25 @@ transforms:
         tmp_event = copy(event)
         for i,profile in pairs(event["log"]["profiles"]) do
           for j,control in pairs(profile["controls"]) do
-            final_result = -1
             for k,result in pairs(control["results"]) do
+              final_result = -1
               if result["status"] == "passed" then
-                final_result = 1
+                final_result = 0
               end
               if result["status"] == "failed" then
-                final_result = 0
-                break
+                final_result = 1
               end
+              if result["status"] == "skipped" then
+                final_result = 2
+              end
+              result["control"] = control["id"]
+              result["description"] = control["desc"]
+              result["profile"] = profile["name"]
+              result["result_id"] = k
+              result["result"] = final_result
+              tmp_event["log"] = result
+              emit(tmp_event)
             end
-            control["result"] = final_result
-            control["profile"] = profile["name"]
-            tmp_event["log"] = control
-            emit(tmp_event)
           end
         end
       end
@@ -66,10 +71,12 @@ transforms:
       - type: gauge
         field: result
         tags:
-          control: "{{id}}"
-          title: "{{title}}"
-          description: "{{desc}}"
+          control: "{{control}}"
+          description: "{{description}}"
           profile: "{{profile}}"
+          result_id: "{{result_id}}"
+          env_name: "${ENV_NAME}"
+          env_type: "${ENV_TYPE}"
           hostname: "${HOSTNAME}"
 
 sinks:
