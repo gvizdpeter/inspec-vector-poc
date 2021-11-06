@@ -6,7 +6,9 @@ sources:
     scheduled:
       exec_interval_secs: 30
     command:
-      - "/run_inspec.sh"
+      - /bin/bash
+      - -c
+      - "inspec exec ${INSPEC_TARGET} --reporter json:-"
 
 transforms:
   parse_json_transform:
@@ -22,21 +24,39 @@ transforms:
       - parse_json_transform
     version: "2"
     hooks:
-      process: |-
-        function (event, emit)
-          result = -1
-          for k,v in pairs(event["log"]["results"]) do
-            if v["status"] == "passed" then
-              result = 1
+      process: process
+    source: |-
+      function copy(obj, seen)
+        if type(obj) ~= 'table' then return obj end
+        if seen and seen[obj] then return seen[obj] end
+        local s = seen or {}
+        local res = setmetatable({}, getmetatable(obj))
+        s[obj] = res
+        for k, v in pairs(obj) do res[copy(k, s)] = copy(v, s) end
+        return res
+      end
+
+      function process(event, emit)
+        tmp_event = copy(event)
+        for i,profile in pairs(event["log"]["profiles"]) do
+          for j,control in pairs(profile["controls"]) do
+            final_result = -1
+            for k,result in pairs(control["results"]) do
+              if result["status"] == "passed" then
+                final_result = 1
+              end
+              if result["status"] == "failed" then
+                final_result = 0
+                break
+              end
             end
-            if v["status"] == "failed" then
-              result = 0
-              break
-            end
+            control["result"] = final_result
+            control["profile"] = profile["name"]
+            tmp_event["log"] = control
+            emit(tmp_event)
           end
-          event["log"]["result"] = result
-          emit(event)
         end
+      end
 
   log_to_metric_transform:
     type: log_to_metric
@@ -46,9 +66,10 @@ transforms:
       - type: gauge
         field: result
         tags:
-          control_id: "{{id}}"
+          control: "{{id}}"
           title: "{{title}}"
           description: "{{desc}}"
+          profile: "{{profile}}"
           hostname: "${HOSTNAME}"
 
 sinks:
